@@ -16,7 +16,7 @@ class Settings(BaseSettings):
         "nvidia/nemotron-3.5-lightning:free,"
         "openrouter/free"
     )
-    openrouter_site_url: str = "http://localhost:3000"
+    openrouter_site_url: str = "https://estateiq-pjt8.onrender.com"
     openrouter_app_name: str = "EstateIQ"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     scraper_enabled: bool = True
     auto_index_on_start: bool = False
-    cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "https://estateiq-pjt8.onrender.com"
     host: str = "0.0.0.0"
     port: int = 8000
 
