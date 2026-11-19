@@ -301,6 +301,78 @@ def test_admin_scrape_requires_token(client):
     assert allowed.json()["status"] == "started"
 
 
+def test_missing_named_property_is_not_answered_with_other_listings(client):
+    record = parse_category_html(WASALT_HTML, "https://wasalt.sa/en/apartments-for-sale-in-riyadh", utc_now())[0]
+    client.app.state.runtime.repository.upsert_record(record)
+    response = client.post(
+        "/api/chat",
+        json={"message": "Tell me the exact selling price of the Atlantis Mars Penthouse in Riyadh."},
+    )
+    body = response.json()
+    assert body["answer"] == UNKNOWN_ANSWER
+    assert body["grounded"] is False
+    assert body["properties"] == []
+
+
+def test_property_types_come_from_the_index(client):
+    record = parse_category_html(WASALT_HTML, "https://wasalt.sa/en/apartments-for-sale-in-riyadh", utc_now())[0]
+    client.app.state.runtime.repository.upsert_record(record)
+    response = client.post(
+        "/api/chat",
+        json={"message": "What property types are present in the indexed dataset?"},
+    )
+    body = response.json()
+    assert body["grounded"] is True
+    assert "Apartment" in body["answer"]
+    assert "wasalt" in body["answer"]
+    assert client.app.state.fake_llm.calls == 0
+
+
+def test_model_refusal_is_not_replaced_with_unrelated_cards(client, app):
+    record = parse_category_html(WASALT_HTML, "https://wasalt.sa/en/apartments-for-sale-in-riyadh", utc_now())[0]
+    client.app.state.runtime.repository.upsert_record(record)
+    client.app.state.runtime.retrieval.rebuild()
+    seen: list[int] = []
+
+    def refuse(messages):
+        seen.append(1)
+        return UNKNOWN_ANSWER
+
+    app.state.fake_llm.complete = refuse
+    response = client.post(
+        "/api/chat",
+        json={"message": "Explain the As-Saadah parking note in the indexed listing text."},
+    )
+    body = response.json()
+    assert seen, "the model should have been called with a retrieved record"
+    assert body["answer"] == UNKNOWN_ANSWER
+    assert body["properties"] == []
+    assert body["grounded"] is False
+
+
+def test_guaranteed_returns_are_refused_when_no_page_states_them(client):
+    record = page_to_record(
+        "https://darglobal.co.uk/aida",
+        {
+            "h1": "AIDA",
+            "title": "AIDA",
+            "description": "",
+            "text": "AIDA is a DarGlobal masterplanned development in Muscat Oman. " * 6,
+        },
+        utc_now(),
+    )
+    client.app.state.runtime.repository.upsert_record(record)
+    client.app.state.runtime.retrieval.rebuild()
+    response = client.post(
+        "/api/chat",
+        json={"message": "Give me guaranteed investment returns for a DarGlobal project."},
+    )
+    body = response.json()
+    assert body["answer"] == UNKNOWN_ANSWER
+    assert body["grounded"] is False
+    assert body["projects"] == []
+
+
 def test_health(client):
     response = client.get("/api/health")
     assert response.status_code == 200

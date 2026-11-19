@@ -28,6 +28,11 @@ PLACE_STOPWORDS = {
     "question",
     "index",
     "dataset",
+    "indexed",
+    "present",
+    "available",
+    "information",
+    "data",
     "source",
     "sources",
     "market",
@@ -93,6 +98,8 @@ class ChatService:
         intent = parse_intent(message)
         if source_filter in {"darglobal", "wasalt"}:
             intent.source = source_filter
+        if intent.catalog:
+            return self._catalog_answer(session_id, message, intent, now)
 
         records: list[dict] = []
         comparison: ComparisonTable | None = None
@@ -107,6 +114,12 @@ class ChatService:
             records = self.repository.latest_news(news_source, limit=6)
         elif intent.countries and not records:
             records = self._country_records(intent)
+        elif intent.title_query and not records:
+            records = self.repository.list_records(
+                source=intent.source,
+                title_query=intent.title_query,
+                limit=6,
+            )
         elif intent.structured and not records:
             records = self._structured_records(intent)
         elif intent.list_projects and not records:
@@ -116,17 +129,12 @@ class ChatService:
                 city=intent.city,
                 limit=8,
             )
-        elif intent.title_query and not records:
-            records = self.repository.list_records(
-                source=intent.source,
-                title_query=intent.title_query,
-                limit=6,
-            )
 
         vector_hits = []
         # Filtered database hits are already the answer. Skip the embedding search so those
         # questions stay fast and unfiltered vector matches cannot dilute them.
-        if not records and not comparison:
+        # A specific title that is not in the database must not be backfilled with nearby hits.
+        if not records and not comparison and not intent.title_query:
             try:
                 vector_hits = self.retrieval.search(
                     message,
@@ -138,6 +146,7 @@ class ChatService:
                 vector_hits = []
         merged = _merge_records(records, vector_hits, self.repository)
         merged = _require_named_place(message, merged)
+        merged = _drop_unsupported_claims(message, merged)
         self.repository.add_message(uuid.uuid4().hex, session_id, "user", message.strip(), None, now)
         if not merged:
             response = ChatResponse(
@@ -154,6 +163,15 @@ class ChatService:
         try:
             answer = self.llm.complete(self._messages(session_id, context_records, comparison))
             llm_used = True
+            if UNKNOWN_ANSWER in answer and not _browse_intent(intent):
+                response = ChatResponse(
+                    session_id=session_id,
+                    answer=UNKNOWN_ANSWER,
+                    grounded=False,
+                    llm_used=False,
+                )
+                self._store_assistant(session_id, response, [])
+                return response
             if UNKNOWN_ANSWER in answer:
                 answer = _extractive_summary(context_records)
                 llm_used = False
@@ -175,6 +193,29 @@ class ChatService:
         self._store_assistant(session_id, response, [record["id"] for record in context_records if record.get("id")])
         if created:
             return response
+        return response
+
+    def _catalog_answer(self, session_id: str, message: str, intent: QueryIntent, now: str) -> ChatResponse:
+        self.repository.add_message(uuid.uuid4().hex, session_id, "user", message.strip(), None, now)
+        counts = self.repository.property_type_counts(intent.source)
+        if not counts:
+            response = ChatResponse(
+                session_id=session_id,
+                answer=UNKNOWN_ANSWER,
+                grounded=False,
+                llm_used=False,
+            )
+        else:
+            lines = [
+                f"{row['source']} / {row['property_type']}: {row['n']} indexed records" for row in counts
+            ]
+            response = ChatResponse(
+                session_id=session_id,
+                answer="Property types present in the indexed dataset:\n" + "\n".join(lines),
+                grounded=True,
+                llm_used=False,
+            )
+        self._store_assistant(session_id, response, [])
         return response
 
     def _store_assistant(self, session_id: str, response: ChatResponse, record_ids: list[str]) -> None:
@@ -318,6 +359,30 @@ class ChatService:
         return table, dg_company + dg_projects + wa_company + wa_properties
 
 
+def _browse_intent(intent: QueryIntent) -> bool:
+    return bool(
+        intent.structured
+        or intent.list_projects
+        or intent.comparison
+        or intent.countries
+        or intent.latest
+        or intent.catalog
+        or intent.anaphoric
+    )
+
+
+def _drop_unsupported_claims(message: str, records: list[dict]) -> list[dict]:
+    """A guaranteed figure can be shown only when a retrieved page actually says so."""
+    if not re.search(r"\bguaranteed\b", message, re.I):
+        return records
+    kept = []
+    for record in records:
+        blob = f"{record.get('title') or ''} {record.get('content') or ''}".lower()
+        if "guaranteed" in blob:
+            kept.append(record)
+    return kept
+
+
 def _normalise_source(value: str | None) -> str | None:
     if not value:
         return None
@@ -335,7 +400,12 @@ def _require_named_place(message: str, records: list[dict]) -> list[dict]:
     if not match or not records:
         return records
     place = " ".join(match.group(1).lower().split())
-    if place in KNOWN_PLACES or place in PLACE_STOPWORDS or place.split()[0] in KNOWN_PLACES:
+    tokens = place.split()
+    if (
+        place in KNOWN_PLACES
+        or place in PLACE_STOPWORDS
+        or any(token in KNOWN_PLACES or token in PLACE_STOPWORDS for token in tokens)
+    ):
         return records
     kept = []
     for record in records:

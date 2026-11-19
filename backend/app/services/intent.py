@@ -77,6 +77,7 @@ class QueryIntent:
     anaphoric: bool = False
     similar: bool = False
     title_query: str | None = None
+    catalog: bool = False
 
     @property
     def structured(self) -> bool:
@@ -112,6 +113,8 @@ def parse_intent(message: str) -> QueryIntent:
         intent.source = "wasalt"
     if re.search(r"\b(compare|comparison|differences?|versus|vs)\b", text) or "both datasets" in text or "both sources" in text:
         intent.comparison = True
+    if re.search(r"\b(property types|types of propert(?:y|ies)|kinds of propert)\b", text):
+        intent.catalog = True
     if re.search(r"\b(latest|recent|announcement|news|press)\b", text):
         intent.latest = True
     if re.search(r"\b(which countries|what countries|where does|markets|operate)\b", text):

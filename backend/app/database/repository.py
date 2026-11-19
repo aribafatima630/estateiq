@@ -349,6 +349,30 @@ class Repository:
             messages.append(item)
         return messages
 
+    def property_type_counts(self, source: str | None = None) -> list[dict[str, Any]]:
+        if source:
+            rows = self.db.query(
+                """
+                SELECT source, property_type, COUNT(*) AS n
+                FROM records
+                WHERE property_type IS NOT NULL AND property_type != '' AND source = ?
+                GROUP BY source, property_type
+                ORDER BY n DESC
+                """,
+                (source,),
+            )
+        else:
+            rows = self.db.query(
+                """
+                SELECT source, property_type, COUNT(*) AS n
+                FROM records
+                WHERE property_type IS NOT NULL AND property_type != ''
+                GROUP BY source, property_type
+                ORDER BY n DESC
+                """
+            )
+        return [dict(row) for row in rows]
+
     def list_sessions(self, limit: int = 30) -> list[dict[str, Any]]:
         rows = self.db.query(
             "SELECT id, title, source_filter, created_at, updated_at FROM sessions ORDER BY updated_at DESC LIMIT ?",
