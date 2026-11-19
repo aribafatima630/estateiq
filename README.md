@@ -106,11 +106,26 @@ The live service can be checked at `/api/health` and through the chat box on the
 
 ## Current Limitations and Future Improvements
 
-- Render's free instance sleeps, and the first request after sleep is slow. A paid instance, or an external ping, would keep it warm.
-- The disk is ephemeral. The index survives sleep because it is inside the image, and it is replaced only when a new image is deployed. Conversations created on the running instance are not part of that image.
-- The public service does not crawl on demand. Refreshing the snapshot means a new collection and a new deploy.
-- Wasalt is a capped sample of category pages, not the full catalogue. A few published prices are extreme outliers and are stored as published.
+### Current limitations
+
+- Render's free instance sleeps after about 15 minutes without traffic. The first request after sleep waits for the process to start.
+- The host disk is ephemeral. The index survives sleep because it is baked into the image. Conversations created after deploy live only on that instance.
+- The public service does not crawl on demand. A fresher snapshot requires a new collection and a new image.
+- Wasalt coverage is a capped sample of the first server-rendered category page for each selected city, type, and purpose. It is not the full marketplace.
+- A few Wasalt prices are extreme values published on the source page. They are stored as published.
 - DarGlobal development pages in this snapshot do not publish a unit price.
-- OpenRouter free models share a small quota. The same question can receive a written answer one minute and the unavailable-model note the next. The cards still come from the index.
-- The production image does not run FAISS or PyTorch. It uses the same MiniLM vectors through NumPy.
-- `GET /api/stats` reports `last_scrape` as null because the committed snapshot has record timestamps and does not have a scrape-run row.
+- OpenRouter free models share a small quota. The same question can receive a written answer one minute and the unavailable-model note the next. Retrieved cards are still shown.
+- The production image evaluates MiniLM with NumPy. It does not ship FAISS or PyTorch.
+- `GET /api/stats` reports `last_scrape` as null. Record timestamps are stored, and the committed snapshot has no scrape-run row.
+- Chat history on the public instance is not behind a login.
+
+### Future improvements
+
+- Keep the service awake with a paid instance, or accept the cold start and show it in the interface.
+- Attach persistent storage so conversations and a refreshed index survive a new deploy.
+- Run a scheduled, rate-limited collection and write a scrape-run row, so `last_scrape` reflects the latest successful collection.
+- Widen the Wasalt sample only where the public pages expose more listings without calling the internal API.
+- Normalize city labels such as Aldammam and Makkah Al Mukarramah, and flag published prices that sit far outside the rest of the sample.
+- Cache a successful free-model answer for an identical question, and keep the current fallback across free models when a provider returns 429 or an empty completion.
+- Move production retrieval to FAISS on a host that can load it, using the same MiniLM vectors.
+- Require a session owner for history listing, so one visitor cannot read another visitor's conversation titles.
